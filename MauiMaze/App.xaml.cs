@@ -1,4 +1,4 @@
-﻿
+
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -270,6 +270,14 @@ public class MazePage : ContentPage
     private double currentAccelY = 0;
     private CancellationTokenSource gameLoopCts;
 
+    // Timer Variables
+    private DateTime timerStartTime;
+    private bool isTimerRunning = false;
+    private TimeSpan elapsedTime;
+    private Label timerLabel;
+    private bool hasBallStartedMoving = false;
+    private Button btnHardMode;
+
     const int c = 4;
     const int nodesPerLogicalUnit = 40;
 
@@ -285,9 +293,11 @@ public class MazePage : ContentPage
 
         graphicsView.SizeChanged += GraphicsView_SizeChanged;
 
+        timerLabel = new Label { Text = "Time: 0:00.00", FontSize = 18, TextColor = Colors.White, HorizontalOptions = LayoutOptions.Center, WidthRequest = 120 };
+
         var btnNewMaze = new Button { Text = "New Maze", Margin = new Thickness(10), BackgroundColor = Colors.DarkGray, TextColor = Colors.White, HorizontalOptions = LayoutOptions.FillAndExpand };
-        var btnHardMode = new Button { Text = "Mode", Margin = new Thickness(10), BackgroundColor = Colors.DarkGreen, TextColor = Colors.White, HorizontalOptions = LayoutOptions.FillAndExpand };
-        btnHardMode.Clicked += (s, e) => { drawable.HardMode = !drawable.HardMode; btnHardMode.BackgroundColor = drawable.HardMode ? Colors.DarkRed  : Colors.DarkGreen; };
+        btnHardMode = new Button { Text = "Mode", Margin = new Thickness(10), BackgroundColor = Colors.DarkGreen, TextColor = Colors.White, HorizontalOptions = LayoutOptions.FillAndExpand };
+        btnHardMode.Clicked += (s, e) => { if (!hasBallStartedMoving && !drawable.IsSolved) { drawable.HardMode = !drawable.HardMode; btnHardMode.BackgroundColor = drawable.HardMode ? Colors.DarkRed : Colors.DarkGreen; } };
         btnNewMaze.Clicked += (s, e) => GenerateNewMaze();
 
         var buttonRow = new HorizontalStackLayout
@@ -297,7 +307,8 @@ public class MazePage : ContentPage
             Children =
             {
                 btnNewMaze,
-                btnHardMode
+                btnHardMode,
+                timerLabel
             }
                 };
 
@@ -343,6 +354,28 @@ public class MazePage : ContentPage
         }
     }
 
+    private void StartTimer()
+    {
+        timerStartTime = DateTime.Now;
+        elapsedTime = TimeSpan.Zero;
+        isTimerRunning = true;
+    }
+
+    private void StopTimer()
+    {
+        if (isTimerRunning)
+        {
+            elapsedTime = DateTime.Now - timerStartTime;
+            isTimerRunning = false;
+        }
+    }
+
+    private void UpdateTimerDisplay()
+    {
+        TimeSpan displayTime = isTimerRunning ? (DateTime.Now - timerStartTime) : elapsedTime;
+        timerLabel.Text = $"Time: {FormatTime(displayTime)}";
+    }
+
     private void GenerateNewMaze()
     {
         if (graphicsView.Width > 0 && graphicsView.Height > 0)
@@ -360,9 +393,13 @@ public class MazePage : ContentPage
         drawable.PlayerX = 0.5f;
         drawable.PlayerY = entranceY + (c / 2f);
 
+        elapsedTime = TimeSpan.Zero;
+        isTimerRunning = false;
+        hasBallStartedMoving = false;
+        btnHardMode.IsEnabled = true;
+        timerLabel.Text = "Time: 0:00.00";
         graphicsView.Invalidate();
 
-        // Restart the physics loop with the new maze
         StartGameLoop();
     }
 
@@ -409,6 +446,14 @@ public class MazePage : ContentPage
 
                 if (dx == 0 && dy == 0) continue;
 
+                bool justStartedMoving = !isTimerRunning && !hasBallStartedMoving && ((Math.Abs(currentAccelX) > deadzone) || (Math.Abs(currentAccelY) > deadzone));
+                if (justStartedMoving)
+                {
+                    hasBallStartedMoving = true;
+                    btnHardMode.IsEnabled = false;
+                    StartTimer();
+                }
+
                 // Update UI on Main Thread
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
@@ -454,6 +499,7 @@ public class MazePage : ContentPage
                         dy = 0;
                     }
 
+                    UpdateTimerDisplay();
                     graphicsView.Invalidate();
                 });
             }
@@ -479,13 +525,32 @@ public class MazePage : ContentPage
             Accelerometer.Stop();
     }
 
+    private string FormatTime(TimeSpan ts)
+    {
+        return $"{ts.Minutes}:{ts.Seconds:00}.{ts.Milliseconds / 10:00}";
+    }
+
     private async void CheckWinCondition()
     {
         drawable.IsSolved = true;
+        StopTimer();
+        StopGameLoop();
+        hasBallStartedMoving = false;
+        btnHardMode.IsEnabled = true;
+        UpdateTimerDisplay();
         graphicsView.Invalidate();
 
-        await DisplayAlertAsync("Congratulations!", "You solved the maze!", "Play Again");
-        GenerateNewMaze();
+        await DisplayAlertAsync("Congratulations!", $"You solved the maze!\nTime: {FormatTime(elapsedTime)}", "Play Again");
+        elapsedTime = TimeSpan.Zero;
+        isTimerRunning = false;
+        timerLabel.Text = "Time: 0:00.00";
+        dx = 0;
+        dy = 0;
+        drawable.IsSolved = false;
+        drawable.PlayerX = 0.5f;
+        drawable.PlayerY = entranceY + (c / 2f);
+        graphicsView.Invalidate();
+        StartGameLoop();
     }
 
     private bool IsWall(float x, float y)
